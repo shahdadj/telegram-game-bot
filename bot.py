@@ -3,7 +3,7 @@ import time
 import random
 from database import init_db, add_user, get_user, update_user
 
-TOKEN = "توکن_خودتو_اینجا_بذار"
+TOKEN = "8587480321:AAHQtL4tJASYVhcP-zuvui0rMMk8aBebE0g"
 BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 
 init_db()
