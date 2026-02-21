@@ -9,13 +9,20 @@ BASE_URL = f"https://api.telegram.org/bot{TOKEN}"
 init_db()
 
 last_update_id = None
-active_games = {}  # نگه داشتن بازی‌ها داخل حافظه
+active_games = {}
 
 def send_message(chat_id, text):
-    requests.post(f"{BASE_URL}/sendMessage",
-                  data={"chat_id": chat_id, "text": text})
+    requests.post(
+        f"{BASE_URL}/sendMessage",
+        data={"chat_id": chat_id, "text": text}
+    )
 
 def start_game(chat_id, user_id):
+    # اگر بازی فعال داشت دوباره نسازه
+    if user_id in active_games:
+        send_message(chat_id, "شما در حال حاضر داخل بازی هستید 🎮 عددتو حدس بزن!")
+        return
+
     number = random.randint(1, 100)
     active_games[user_id] = number
     send_message(chat_id, "🎲 یک عدد بین 1 تا 100 انتخاب کردم! حدس بزن.")
@@ -46,39 +53,55 @@ def check_guess(chat_id, user_id, guess):
 
 def get_updates():
     global last_update_id
+
     url = f"{BASE_URL}/getUpdates"
     params = {"timeout": 30}
-    if last_update_id:
+
+    if last_update_id is not None:
         params["offset"] = last_update_id + 1
-    return requests.get(url, params=params).json()
+
+    response = requests.get(url, params=params).json()
+    return response
+
 
 print("ربات روشن شد...")
 
 while True:
-    updates = get_updates()
+    try:
+        updates = get_updates()
 
-    if updates["ok"]:
-        for update in updates["result"]:
-            last_update_id = update["update_id"]
+        if updates.get("ok"):
+            for update in updates.get("result", []):
 
-            if "message" in update:
-                chat_id = update["message"]["chat"]["id"]
-                user_id = update["message"]["from"]["id"]
-                text = update["message"].get("text", "")
+                update_id = update["update_id"]
 
-                add_user(user_id)
-
-                if text.startswith("/start"):
-                    send_message(chat_id, "سلام! خوش اومدی 🎮")
-
-                elif text.startswith("/play"):
-                    start_game(chat_id, user_id)
-
-                elif text.isdigit():
-                    check_guess(chat_id, user_id, int(text))
-
+                # جلوگیری از پردازش دوباره آپدیت
+                if last_update_id is None or update_id > last_update_id:
+                    last_update_id = update_id
                 else:
-                    send_message(chat_id, "برای شروع بازی /play بزنید.")
+                    continue
 
-    time.sleep(1)
+                if "message" in update:
+                    chat_id = update["message"]["chat"]["id"]
+                    user_id = update["message"]["from"]["id"]
+                    text = update["message"].get("text", "")
 
+                    add_user(user_id)
+
+                    if text.startswith("/start"):
+                        send_message(chat_id, "سلام! خوش اومدی 🎮")
+
+                    elif text.startswith("/play"):
+                        start_game(chat_id, user_id)
+
+                    elif text.isdigit():
+                        check_guess(chat_id, user_id, int(text))
+
+                    else:
+                        send_message(chat_id, "برای شروع بازی /play بزنید.")
+
+        time.sleep(1)
+
+    except Exception as e:
+        print("خطا:", e)
+        time.sleep(5)
