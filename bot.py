@@ -14,6 +14,14 @@ active_games = {}
 attempts = {}
 pending_bets = {}
 
+# ---------------- ابزار کمکی ----------------
+
+def get_display_name(user):
+    username = user.get("username")
+    if username:
+        return "@" + username
+    return str(user["id"])
+
 # ---------------- ارسال پیام ----------------
 
 def send_message(chat_id, text, keyboard=None):
@@ -21,32 +29,38 @@ def send_message(chat_id, text, keyboard=None):
         "chat_id": chat_id,
         "text": text
     }
-
     if keyboard:
         data["reply_markup"] = json.dumps(keyboard)
 
-    requests.post(f"{BASE_URL}/sendMessage", data=data)
+    res = requests.post(f"{BASE_URL}/sendMessage", data=data).json()
+    return res
 
-# ---------------- منوی اصلی ----------------
+def edit_message(chat_id, message_id, text):
+    data = {
+        "chat_id": chat_id,
+        "message_id": message_id,
+        "text": text
+    }
+    requests.post(f"{BASE_URL}/editMessageText", data=data)
+
+# ---------------- منو ----------------
 
 def show_menu(chat_id):
     keyboard = {
         "inline_keyboard": [
-            [{"text": "🎲 حدس عدد", "callback_data": "number_game"}],
-            [{"text": "🔥 شرط‌بندی", "callback_data": "bet_game"}],
+            [{"text": "🎲 حدس عدد", "callback_data": "number"}],
+            [{"text": "🔥 شرط‌بندی", "callback_data": "bet"}],
             [{"text": "💰 موجودی", "callback_data": "balance"}]
         ]
     }
-
-    send_message(chat_id, "🎮 یک بازی انتخاب کن:", keyboard)
+    send_message(chat_id, "🎮 انتخاب کن:", keyboard)
 
 # ---------------- بازی حدس عدد ----------------
 
-def start_game(chat_id, user_id):
-    number = random.randint(1, 100)
-    active_games[user_id] = number
+def start_number_game(chat_id, user_id):
+    active_games[user_id] = random.randint(1, 100)
     attempts[user_id] = 0
-    send_message(chat_id, "🎲 یک عدد بین 1 تا 100 انتخاب کردم! حدس بزن.")
+    send_message(chat_id, "🎲 یک عدد بین 1 تا 100 انتخاب کردم!")
 
 def check_guess(chat_id, user_id, guess):
     if user_id not in active_games:
@@ -70,14 +84,12 @@ def check_guess(chat_id, user_id, guess):
         else:
             reward = 1
 
-        tokens += reward
-        update_user(user_id, tokens)
+        update_user(user_id, tokens + reward)
 
         send_message(chat_id,
             f"🎉 درست حدس زدی!\n"
-            f"🔢 تعداد تلاش: {tries}\n"
-            f"💰 جایزه: {reward}\n"
-            f"🏦 موجودی جدید: {tokens}"
+            f"تلاش: {tries}\n"
+            f"جایزه: {reward}"
         )
 
         del active_games[user_id]
@@ -92,47 +104,50 @@ def check_guess(chat_id, user_id, guess):
 
 def show_balance(chat_id, user_id):
     tokens = get_user(user_id)[0]
-    send_message(chat_id, f"💰 موجودی شما: {tokens} سکه")
+    send_message(chat_id, f"💰 موجودی: {tokens}")
 
 # ---------------- ساخت شرط ----------------
 
-def create_bet(chat_id, user_id, amount):
+def create_bet(chat_id, user, amount):
+    user_id = user["id"]
+    name = get_display_name(user)
+
     tokens = get_user(user_id)[0]
-
     if tokens < amount:
-        send_message(chat_id, "❌ سکه کافی نداری!")
+        send_message(chat_id, "❌ سکه کافی نداری")
         return
-
-    pending_bets[chat_id] = {
-        "creator": user_id,
-        "amount": amount
-    }
 
     keyboard = {
         "inline_keyboard": [
             [
-                {"text": "✅ قبول", "callback_data": "accept_bet"},
-                {"text": "❌ لغو", "callback_data": "cancel_bet"}
+                {"text": "✅ قبول", "callback_data": "accept"},
+                {"text": "❌ لغو", "callback_data": "cancel"}
             ]
         ]
     }
 
-    send_message(
+    res = send_message(
         chat_id,
-        f"🎲 شرط {amount} سکه‌ای ایجاد شد!\n"
-        f"سازنده شرط: {user_id}",
+        f"🎲 شرط {amount} سکه‌ای\n"
+        f"سازنده: {name}",
         keyboard
     )
+
+    message_id = res["result"]["message_id"]
+
+    pending_bets[chat_id] = {
+        "creator": user,
+        "amount": amount,
+        "message_id": message_id
+    }
 
 # ---------------- دریافت آپدیت ----------------
 
 def get_updates():
     global last_update_id
     params = {"timeout": 30}
-
     if last_update_id:
         params["offset"] = last_update_id + 1
-
     return requests.get(f"{BASE_URL}/getUpdates", params=params).json()
 
 print("ربات روشن شد...")
@@ -144,97 +159,112 @@ while True:
         updates = get_updates()
 
         if updates.get("ok"):
-            for update in updates.get("result", []):
-
+            for update in updates["result"]:
                 last_update_id = update["update_id"]
 
-                # ---------------- دکمه‌ها ----------------
+                # ---------- دکمه ----------
                 if "callback_query" in update:
                     query = update["callback_query"]
                     chat_id = query["message"]["chat"]["id"]
-                    user_id = query["from"]["id"]
+                    user = query["from"]
+                    user_id = user["id"]
                     data = query["data"]
 
                     add_user(user_id)
 
-                    if data == "number_game":
-                        start_game(chat_id, user_id)
+                    if data == "number":
+                        start_number_game(chat_id, user_id)
 
-                    elif data == "bet_game":
-                        send_message(chat_id, "برای ساخت شرط بنویس:\nشرط 50")
+                    elif data == "bet":
+                        send_message(chat_id, "مثال:\nشرطبندی 20")
 
                     elif data == "balance":
                         show_balance(chat_id, user_id)
 
-                    elif data == "accept_bet":
+                    elif data == "accept":
+
                         if chat_id not in pending_bets:
-                            send_message(chat_id, "❌ شرطی وجود ندارد.")
                             continue
 
                         bet = pending_bets[chat_id]
                         creator = bet["creator"]
                         amount = bet["amount"]
+                        message_id = bet["message_id"]
 
-                        if user_id == creator:
-                            send_message(chat_id, "❌ نمی‌تونی شرط خودتو قبول کنی!")
+                        if user_id == creator["id"]:
+                            send_message(chat_id, "❌ نمی‌تونی شرط خودتو قبول کنی")
                             continue
 
-                        creator_tokens = get_user(creator)[0]
+                        creator_tokens = get_user(creator["id"])[0]
                         user_tokens = get_user(user_id)[0]
 
                         if creator_tokens < amount or user_tokens < amount:
-                            send_message(chat_id, "❌ یکی از طرفین سکه کافی نداره!")
+                            send_message(chat_id, "❌ یکی سکه کافی نداره")
                             continue
 
-                        update_user(creator, creator_tokens - amount)
+                        update_user(creator["id"], creator_tokens - amount)
                         update_user(user_id, user_tokens - amount)
 
-                        winner = random.choice([creator, user_id])
+                        winner = random.choice([creator["id"], user_id])
                         winner_tokens = get_user(winner)[0]
                         update_user(winner, winner_tokens + amount * 2)
 
-                        send_message(chat_id,
+                        winner_name = get_display_name(
+                            creator if winner == creator["id"] else user
+                        )
+
+                        edit_message(
+                            chat_id,
+                            message_id,
                             f"🔥 شرط انجام شد!\n"
-                            f"💰 مبلغ: {amount}\n"
-                            f"🏆 برنده: {winner}"
+                            f"مبلغ: {amount}\n"
+                            f"برنده: {winner_name}"
                         )
 
                         del pending_bets[chat_id]
 
-                    elif data == "cancel_bet":
+                    elif data == "cancel":
+
                         if chat_id not in pending_bets:
-                            send_message(chat_id, "❌ شرطی وجود ندارد.")
                             continue
 
                         bet = pending_bets[chat_id]
                         creator = bet["creator"]
 
-                        if user_id != creator:
-                            send_message(chat_id, "❌ فقط سازنده می‌تونه لغو کنه!")
+                        if user_id != creator["id"]:
+                            send_message(chat_id, "❌ فقط سازنده می‌تونه لغو کنه")
                             continue
 
-                        send_message(chat_id, "❌ شرط لغو شد.")
+                        edit_message(
+                            chat_id,
+                            bet["message_id"],
+                            "❌ شرط لغو شد"
+                        )
+
                         del pending_bets[chat_id]
 
-                # ---------------- پیام متنی ----------------
+                # ---------- پیام متنی ----------
                 elif "message" in update:
                     msg = update["message"]
                     chat_id = msg["chat"]["id"]
-                    user_id = msg["from"]["id"]
+                    user = msg["from"]
+                    user_id = user["id"]
                     text = msg.get("text", "")
 
                     add_user(user_id)
 
-                    if text == "/start":
+                    command = text.split()[0] if text else ""
+
+                    if command.startswith("/start"):
                         show_menu(chat_id)
 
                     elif text.isdigit():
                         check_guess(chat_id, user_id, int(text))
 
-                    elif text.startswith("شرط"):
+                    elif text.startswith("شرطبندی"):
                         parts = text.split()
                         if len(parts) == 2 and parts[1].isdigit():
-                            create_bet(chat_id, user_id, int(parts[1]))
+                            create_bet(chat_id, user, int(parts[1]))
 
         time.sleep(1)
 
